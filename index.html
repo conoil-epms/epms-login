@@ -114,7 +114,16 @@
     </div>
   </div>
 
-  <iframe id="appFrame" title="EPMS"></iframe>
+  <iframe id="appFrame" name="appFrame" title="EPMS" style="display:none;"></iframe>
+
+  <!-- Hidden form for native POST submission. Browsers do NOT subject
+       traditional form submissions to the same CORS/auth-layer
+       restrictions that block fetch() to Apps Script from a foreign
+       origin — this is the Google-documented workaround. -->
+  <form id="signinForm" method="POST" action="" target="appFrame" style="display:none;">
+    <input type="hidden" name="action" value="requestAuthTokenForm">
+    <input type="hidden" name="idToken" id="idTokenField" value="">
+  </form>
 
   <script>
     // ─────────────────────────────────────────────
@@ -132,30 +141,31 @@
     function handleGoogleCredential(response) {
       showStatus('<span class="spinner"></span>Verifying your account…', 'info');
 
-      fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'requestAuthToken',
-          idToken: response.credential
-        })
-      })
-      .then(function (res) { return res.json(); })
-      .then(function (data) {
-        if (data && data.success && data.data && data.data.redirectUrl) {
-          showStatus('<span class="spinner"></span>Opening EPMS…', 'info');
-          // Real browser navigation — Apps Script renders the page itself,
-          // through its own normal, reliable pipeline. No cross-origin
-          // script-injection issues, since nothing is injected at all.
-          window.location.href = data.data.redirectUrl;
-        } else {
-          showStatus((data && data.message) || 'Sign-in failed. Please try again.', 'error');
+      // Native form POST — bypasses the GSE auth-layer interception that
+      // blocks fetch() requests to Apps Script from a foreign origin.
+      // The response loads inside the hidden iframe; that page (served
+      // by Apps Script itself) will redirect the TOP-LEVEL window once
+      // it has a valid auth token, via window.top.location.
+      var form = document.getElementById('signinForm');
+      form.action = APPS_SCRIPT_URL;
+      document.getElementById('idTokenField').value = response.credential;
+      form.submit();
+
+      // Give the iframe time to load and redirect; if nothing happens
+      // within a reasonable window, show an error rather than hanging.
+      setTimeout(function () {
+        var statusEl = document.getElementById('statusMsg');
+        if (statusEl && statusEl.textContent.indexOf('Verifying') !== -1) {
+          showStatus('Taking longer than expected. Please wait or refresh and try again.', 'info');
         }
-      })
-      .catch(function (err) {
-        showStatus('Connection error: ' + err.message, 'error');
-      });
+      }, 6000);
     }
+
+    window.addEventListener('message', function (event) {
+      if (event.data && event.data.type === 'epms-signin-error') {
+        showStatus(event.data.message, 'error');
+      }
+    });
 
     window.addEventListener('load', function () {
       if (typeof google === 'undefined' || !google.accounts) {
