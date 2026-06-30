@@ -141,24 +141,27 @@
     function handleGoogleCredential(response) {
       showStatus('<span class="spinner"></span>Verifying your account…', 'info');
 
-      // Native form POST — bypasses the GSE auth-layer interception that
-      // blocks fetch() requests to Apps Script from a foreign origin.
-      // The response loads inside the hidden iframe; that page (served
-      // by Apps Script itself) will redirect the TOP-LEVEL window once
-      // it has a valid auth token, via window.top.location.
-      var form = document.getElementById('signinForm');
-      form.action = APPS_SCRIPT_URL;
-      document.getElementById('idTokenField').value = response.credential;
-      form.submit();
+      // GET request instead of POST — Apps Script's internal redirect
+      // from script.google.com to its execution domain is known to lose
+      // POST request bodies in many client/redirect-type combinations.
+      // GET has no body to lose, so this is the reliable path.
+      var url = APPS_SCRIPT_URL
+        + '?action=requestAuthToken'
+        + '&idToken=' + encodeURIComponent(response.credential);
 
-      // Give the iframe time to load and redirect; if nothing happens
-      // within a reasonable window, show an error rather than hanging.
-      setTimeout(function () {
-        var statusEl = document.getElementById('statusMsg');
-        if (statusEl && statusEl.textContent.indexOf('Verifying') !== -1) {
-          showStatus('Taking longer than expected. Please wait or refresh and try again.', 'info');
-        }
-      }, 6000);
+      fetch(url, { method: 'GET' })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          if (data && data.success && data.data && data.data.redirectUrl) {
+            showStatus('<span class="spinner"></span>Opening EPMS…', 'info');
+            window.location.href = data.data.redirectUrl;
+          } else {
+            showStatus((data && data.message) || 'Sign-in failed. Please try again.', 'error');
+          }
+        })
+        .catch(function (err) {
+          showStatus('Connection error: ' + err.message, 'error');
+        });
     }
 
     window.addEventListener('message', function (event) {
